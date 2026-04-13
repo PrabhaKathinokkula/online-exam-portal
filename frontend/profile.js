@@ -90,9 +90,7 @@ function renderProfileData(subjects) {
                         <h4 style="color: #00d2ff; margin: 0;">${subName}</h4>
                         <p style="font-size: 0.75rem; color: #28a745;">${subPassed}/3 Levels Completed</p>
                     </div>
-                    <button onclick="resetSubject('${subName}')" style="background:#ff9800; color:white; border:none; padding:5px 10px; border-radius:5px; cursor:pointer; font-size:0.7rem;">
-                        Reset Progress
-                    </button>
+    
                 </div>
                 <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
                     ${levelsHtml}
@@ -125,19 +123,6 @@ async function saveProfile() {
             location.reload();
         }
     } catch (err) { alert("Error updating profile"); }
-}
-
-async function resetSubject(subjectName) {
-    if(!confirm(`Reset all progress for ${subjectName}?`)) return;
-    const token = localStorage.getItem('token');
-    try {
-        const res = await fetch('http://localhost:5000/reset-subject', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-            body: JSON.stringify({ subject: subjectName })
-        });
-        if(res.ok) location.reload();
-    } catch (err) { alert("Reset failed"); }
 }
 
 function logout() {

@@ -3,121 +3,210 @@ document.addEventListener('DOMContentLoaded', async () => {
     const token = localStorage.getItem('token');
     const container = document.getElementById('dashboard-content');
     const userDisplay = document.getElementById('user-display');
-    // Add this inside the try block of dashboard.js after setting userDisplay.innerText
-    const profilePic = document.getElementById('profile-pic');
-    if (profilePic) {
-        profilePic.src = `https://ui-avatars.com/api/?name=${username}&background=00d2ff&color=fff&bold=true`;
-    }
-    // 1. Auth Guard
+
     if (!username || !token) {
         window.location.href = 'index.html';
         return;
     }
 
-    if (userDisplay) userDisplay.innerText = username;
+    userDisplay.innerText = username;
+    const profilePic = document.getElementById('profile-pic');
+
+    if (profilePic && username) {
+        profilePic.innerText = username.charAt(0);
+    }
 
     try {
-        // 2. Fetch data from Backend
         const response = await fetch('http://localhost:5000/user-data', {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            }
+            headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.message || 'Failed to fetch data');
-        }
-
         const data = await response.json();
+        window.userBadges = data.badges || [];
         const subjects = data.subjects;
 
-        // 3. Clear loading text and build UI
         container.innerHTML = '';
 
-        if (!subjects || Object.keys(subjects).length === 0) {
-            container.innerHTML = '<p style="color:white; text-align:center;">No subjects found.</p>';
-            return;
-        }
-
-        // Iterate through each subject (DevOps, MongoDB, etc.)
         for (const [subName, levels] of Object.entries(subjects)) {
-            const card = document.createElement('div');
-            card.className = 'glass-card dash-card';
-            card.style.marginBottom = '20px';
 
-            let buttonsHTML = '';
-            const levelKeys = ['levelA', 'levelB', 'levelC'];
+            const subjectDiv = document.createElement('div');
+            subjectDiv.style.width = '100%';
+            subjectDiv.style.maxWidth = '900px';
 
-            levelKeys.forEach(lKey => {
-                const levelData = levels[lKey];
-                buttonsHTML += getLevelButtonMarkup(subName, lKey, levelData);
-            });
-
-            card.innerHTML = `
-                <h2 style="margin-bottom:20px; color:#00d2ff; text-align:center;">${subName}</h2>
-                <div class="level-list" style="display:flex; flex-direction:column; gap:12px;">
-                    ${buttonsHTML}
+            subjectDiv.innerHTML = `
+                <h2 style="color:#00d2ff; margin-bottom:15px;">${subName}</h2>
+                <div style="display:flex; gap:20px; flex-wrap:wrap;">
+                    ${createLevelCard(subName, 'levelA', levels.levelA)}
+                    ${createLevelCard(subName, 'levelB', levels.levelB)}
+                    ${createLevelCard(subName, 'levelC', levels.levelC)}
                 </div>
             `;
-            container.appendChild(card);
+
+            container.appendChild(subjectDiv);
         }
 
-    } catch (error) {
-        console.error("Dashboard Error:", error);
-        container.innerHTML = `
-            <div style="color: #ff416c; text-align: center; padding: 20px; background: rgba(0,0,0,0.2); border-radius: 10px;">
-                <h3>Dashboard Error</h3>
-                <p>${error.message}</p>
-                <small>Ensure backend is running on port 5000</small>
-            </div>`;
+    } catch (err) {
+        console.error(err);
+        container.innerHTML = `<p style="color:red;">Error loading dashboard</p>`;
     }
 });
 
-// Helper function to generate button HTML with color logic
-function getLevelButtonMarkup(subject, levelKey, levelData) {
-    const isPassed = levelData.status === "passed";
-    const isLocked = levelData.status === "locked";
-    const hasAttempted = levelData.attempts > 0;
+// ✅ LEVEL CARD WITH COOLDOWN
+function createLevelCard(subject, levelKey, data) {
 
-    // Determine Background Color
-    let bgColor = "rgba(255,255,255,0.1)"; // Default Unlocked
-    let statusText = "";
+    const isLocked = data.status === "locked";
+    const isPassed = data.status === "passed";
+    const attempted = data.attempts > 0;
 
+    let content = "";
+
+    // 🔒 LOCKED LEVEL
     if (isLocked) {
-        statusText = " (Locked)";
-    } else if (isPassed) {
-        bgColor = "#28a745"; // Green
-        statusText = " - Completed";
-    } else if (hasAttempted) {
-        bgColor = "#dc3545"; // Red
-        statusText = " - Failed";
+        content = `<p class="locked">Locked</p>`;
     }
 
-    const scoreText = levelData.score > 0 ? ` [${levelData.score}%]` : "";
-    const label = levelKey.replace('level', 'Level ') + statusText + scoreText;
+    // ▶ FIRST TIME
+    else if (!attempted) {
+        content = `
+            <button onclick="goToExam('${subject}','${levelKey}')">
+                Start Exam
+            </button>
+        `;
+    }
+
+    else {
+        const attempts = data.attempts || 0;
+        const isFailed = !isPassed;
+
+        let cooldownUI = "";
+
+        // ✅ CHECK COOLDOWN (3,6,9...)
+        if (isFailed && attempts % 3 === 0 && data.endTime) {
+
+            const endTime = new Date(data.endTime).getTime();
+            const unlockTime = endTime + (24 * 60 * 60 * 1000);
+
+            const remaining = unlockTime - Date.now();
+
+            if (remaining > 0) {
+                const timerId = `timer-${subject}-${levelKey}`;
+
+                cooldownUI = `
+                    <p class="failed">Failed</p>
+                    <button disabled style="opacity:0.5; cursor:not-allowed;">
+                        Locked (24h cooldown)
+                    </button>
+                    <p id="${timerId}" style="margin-top:5px; color:#ffcc00;"></p>
+                `;
+
+                // Start timer after render
+                setTimeout(() => {
+                    startCooldownTimer(timerId, unlockTime);
+                }, 100);
+            }
+        }
+
+        // NORMAL CONTENT
+        if (!cooldownUI) {
+            content = `
+                <p>Score: ${data.score}%</p>
+                <p>Time: ${formatTime(data.timeTaken)}</p>
+                <p>Attempts: ${attempts}</p>
+
+                ${isPassed
+                    ? `
+    <p class="completed">Completed</p>
+
+    ${getBadgeUI(subject, levelKey)}
+`
+                    : `
+                        <p class="failed">Failed</p>
+                        <button class="retake" onclick="goToExam('${subject}','${levelKey}')">
+                            Retake
+                        </button>
+                    `
+                }
+            `;
+        } else {
+            content = `
+                <p>Score: ${data.score}%</p>
+                <p>Time: ${formatTime(data.timeTaken)}</p>
+                <p>Attempts: ${attempts}</p>
+                ${cooldownUI}
+            `;
+        }
+    }
 
     return `
-        <div style="position: relative; width: 100%;">
-            <button class="level-btn" 
-                ${isLocked ? 'disabled' : ''} 
-                onclick="goToExam('${subject}', '${levelKey}')"
-                style="background: ${bgColor}; width: 100%; text-align: left; padding: 18px; border-radius: 10px; color: white; border: 1px solid rgba(255,255,255,0.1); cursor: ${isLocked ? 'not-allowed' : 'pointer'}; opacity: ${isLocked ? '0.5' : '1'}; transition: 0.3s; font-size: 1rem; font-weight: 500;">
-                ${label}
-                
-                ${(hasAttempted && !isPassed) ?
-            `<span style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); background: #ffc107; color: black; padding: 4px 10px; border-radius: 5px; font-size: 0.75rem; font-weight: bold; letter-spacing: 0.5px;">RETAKE</span>`
-            : ''}
-            </button>
+        <div class="glass-card ${isLocked ? 'locked-card' : ''}" 
+             style="flex:1; min-width:220px; text-align:center; padding:20px;">
+             
+            <h3>${levelKey.replace('level', 'Level ')}</h3>
+            ${content}
+
         </div>
     `;
 }
 
-// Navigation Function
-function goToExam(sub, lvlKey) {
+// ⏱ COOLDOWN TIMER
+function startCooldownTimer(elementId, unlockTime) {
+    const el = document.getElementById(elementId);
+
+    const interval = setInterval(() => {
+        const diff = unlockTime - Date.now();
+
+        if (diff <= 0) {
+            clearInterval(interval);
+            el.innerText = "Unlocked! Refresh page";
+            return;
+        }
+
+        const hrs = Math.floor(diff / (1000 * 60 * 60));
+        const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const secs = Math.floor((diff % (1000 * 60)) / 1000);
+
+        el.innerText = `Unlock in ${hrs}h ${mins}m ${secs}s`;
+    }, 1000);
+}
+
+// FORMAT TIME
+function formatTime(seconds) {
+    if (!seconds || isNaN(seconds)) return "0s";
+
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+
+    return `${m}m ${s}s`;
+}
+
+// NAVIGATION
+function goToExam(sub, lvl) {
     localStorage.setItem('selectedSubject', sub);
-    localStorage.setItem('selectedLevel', lvlKey);
+    localStorage.setItem('selectedLevel', lvl);
     window.location.href = 'exam.html';
+}
+function getBadgeUI(subject, levelKey) {
+    if (!window.userBadges) return "";
+
+    const badge = window.userBadges.find(
+        b => b.subject === subject && b.level === levelKey
+    );
+
+    if (!badge || !badge.badgeId) return "";
+
+    const imageUrl = "http://localhost:5000" + badge.badgeId.image;
+
+    return `
+        <div style="margin-top:10px; display:flex; justify-content:center; align-items:center; gap:10px;">
+            
+            <img src="${imageUrl}" 
+                 style="width:40px; height:40px; border-radius:8px;" />
+
+            <a href="${imageUrl}" download title="Download Badge"
+               style="text-decoration:none; font-size:18px;">
+               ⬇️
+            </a>
+
+        </div>
+    `;
 }

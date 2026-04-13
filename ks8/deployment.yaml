@@ -14,6 +14,6 @@ spec:
     spec:
       containers:
       - name: online-exam
-        image: harshini2105/online-exam-openshift:latest
+        image: prabha524/online-exam-openshift:latest
         ports:
         - containerPort: 3000

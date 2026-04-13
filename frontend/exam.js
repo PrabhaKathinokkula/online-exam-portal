@@ -2,6 +2,11 @@ let questions = [];
 let currentIndex = 0;
 let answers = {};
 
+// TIMER
+let timerInterval;
+let totalTime = 0;
+let examStartTime = null;
+
 async function initExam() {
     const sub = localStorage.getItem('selectedSubject');
     const lvl = localStorage.getItem('selectedLevel');
@@ -12,170 +17,259 @@ async function initExam() {
         infoHeader.innerText = `${sub} - ${lvl}`;
     }
 
+    // TIMER SETUP
+    if (lvl === "levelA") totalTime = 20 * 60;
+    else if (lvl === "levelB") totalTime = 15 * 60;
+    else if (lvl === "levelC") totalTime = 10 * 60;
+
+    examStartTime = new Date();
+    startTimer();
+
     try {
-        // 1. Fetch user data to check current attempts for rotation logic
         const userRes = await fetch('http://localhost:5000/user-data', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const userData = await userRes.json();
 
-        // 2. Calculate setNumber: (attempts % 3) + 1
-        // This ensures the sequence 1 -> 2 -> 3 -> 1...
+        await fetch('http://localhost:5000/start-exam', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ subject: sub, level: lvl })
+        });
+
         const attempts = userData.subjects[sub][lvl].attempts || 0;
         const setNumber = (attempts % 3) + 1;
 
-        // 3. Fetch questions using the calculated setNumber
-        const res = await fetch(`http://localhost:5000/questions?subject=${sub}&level=${lvl}&setNumber=${setNumber}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (!res.ok) throw new Error("Failed to fetch questions");
+        const res = await fetch(
+            `http://localhost:5000/questions?subject=${sub}&level=${lvl}&setNumber=${setNumber}`,
+            { headers: { 'Authorization': `Bearer ${token}` } }
+        );
 
         questions = await res.json();
 
         if (questions.length > 0) {
             renderQuestion();
         } else {
-            document.getElementById('quiz-area').innerHTML = `<p style="color:white; text-align:center;">No questions found for Set ${setNumber}.</p>`;
+            document.getElementById('quiz-area').innerHTML =
+                `<p style="color:white; text-align:center;">No questions found.</p>`;
         }
+
     } catch (err) {
         console.error(err);
-        document.getElementById('quiz-area').innerHTML = `<p style="color:red; text-align:center;">Server error. Please check your connection.</p>`;
     }
 }
+
+// TIMER
+function startTimer() {
+    const timerBox = document.getElementById("timer-box");
+
+    timerInterval = setInterval(() => {
+        const minutes = Math.floor(totalTime / 60);
+        const seconds = totalTime % 60;
+
+        timerBox.innerText = `⏱ ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+
+        totalTime--;
+
+        if (totalTime < 0) {
+            clearInterval(timerInterval);
+            submitExam();
+        }
+    }, 1000);
+}
+
+// ✅ FIXED OPTIONS UI
 function renderQuestion() {
     const q = questions[currentIndex];
     const area = document.getElementById('quiz-area');
-    if (!area || !q) return;
-
-    // Reset animation so it plays on every question change
-    area.style.animation = 'none';
-    area.offsetHeight; /* trigger reflow */
-    area.style.animation = null;
+    if (!q) return;
 
     const letters = ['A', 'B', 'C', 'D'];
 
     area.innerHTML = `
-        <div class="glass-card" style="padding: 30px; max-width: 800px; margin: 0 auto; background: rgba(255,255,255,0.05); border-radius: 15px;">
+        <div class="glass-card" style="padding: 30px; max-width: 800px; margin: 0 auto;">
+            
             <p style="font-size: 1.3rem; margin-bottom: 20px; color: white;">
                 <strong>Q${currentIndex + 1}:</strong> ${q.questionText}
             </p>
-            <div class="options-column" style="display: flex; flex-direction: column; gap: 12px;">
+
+            <div>
                 ${q.options.map((opt, i) => `
-                    <label class="option-label" style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 8px; cursor: pointer; color: white; display: flex; align-items: center;">
-                        <input type="radio" name="currentQ" value="${opt}" ${answers[currentIndex] === opt ? 'checked' : ''} style="margin-right: 15px;">
-                        <span><strong style="color: #00d2ff;">${letters[i]}.</strong> ${opt}</span>
+                    <label class="option-label">
+                        <input type="radio" name="currentQ" value="${opt}" 
+                        ${answers[currentIndex] === opt ? 'checked' : ''}>
+                        
+                        <span class="option-prefix">${letters[i]}.</span>
+                        ${opt}
                     </label>
                 `).join('')}
             </div>
 
-            <div class="nav-container" style="display: flex; justify-content: space-between; align-items: center; margin-top: 30px;">
-                <button class="btn-secondary" onclick="prev()" style="${currentIndex === 0 ? 'visibility:hidden' : ''}; background: #444; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">Previous</button>
-                <span style="font-weight: 600; color: white;">${currentIndex + 1} / ${questions.length}</span>
+            <div style="display:flex; justify-content:space-between; margin-top:30px;">
+                <button onclick="prev()" style="${currentIndex === 0 ? 'visibility:hidden' : ''}">
+                    Previous
+                </button>
+
+                <span style="color:white;">
+                    ${currentIndex + 1} / ${questions.length}
+                </span>
+
                 ${currentIndex === questions.length - 1
-            ? `<button class="btn-finish" onclick="submitExam()" style="background: #00d2ff; color: black; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;">Finish Exam</button>`
-            : `<button class="btn-primary" onclick="next()" style="background: #00d2ff; color: black; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold;">Next</button>`}
+            ? `<button onclick="submitExam()">Finish</button>`
+            : `<button onclick="next()">Next</button>`}
             </div>
+
         </div>
     `;
 }
 
-function next() { saveAnswer(); currentIndex++; renderQuestion(); }
-function prev() { saveAnswer(); currentIndex--; renderQuestion(); }
+function next() {
+    saveAnswer();
+    currentIndex++;
+    renderQuestion();
+}
+
+function prev() {
+    saveAnswer();
+    currentIndex--;
+    renderQuestion();
+}
 
 function saveAnswer() {
     const selected = document.querySelector('input[name="currentQ"]:checked');
     if (selected) answers[currentIndex] = selected.value;
 }
+
+// SUBMIT
 async function submitExam() {
+    clearInterval(timerInterval);
     saveAnswer();
+
     let score = 0;
-    questions.forEach((q, i) => { if (answers[i] === q.correctAnswer) score++; });
+    questions.forEach((q, i) => {
+        if (answers[i] === q.correctAnswer) score++;
+    });
+
     const finalScore = Math.round((score / questions.length) * 100);
 
     const token = localStorage.getItem('token');
     const subject = localStorage.getItem('selectedSubject');
     const level = localStorage.getItem('selectedLevel');
 
+    const endTime = new Date();
+    const timeTaken = Math.floor((endTime - examStartTime) / 1000);
+
     try {
         const response = await fetch('http://localhost:5000/submit-exam', {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json', 
-                'Authorization': `Bearer ${token}` 
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify({ subject, level, score: finalScore })
+            body: JSON.stringify({
+                subject,
+                level,
+                score: finalScore,
+                timeTaken
+            })
+        });
+        
+        const userRes = await fetch('http://localhost:5000/user-data', {
+            headers: { 'Authorization': `Bearer ${token}` }
         });
 
-        const result = await response.json();
-        const isPassed = finalScore >= 60; // Assuming 60% is pass mark
+        const userData = await userRes.json();
 
-        if (isPassed) {
+        window.userBadges = userData.badges || [];
+
+        if (finalScore >= 60) {
             triggerCelebration(level, subject, finalScore);
         } else {
             showResultPage(false, finalScore);
         }
+
     } catch (err) {
-        console.error("Submission error:", err);
-        alert("Error submitting exam.");
+        console.error(err);
+        alert("Error submitting exam");
     }
 }
 
 function triggerCelebration(level, subject, score) {
-    // 1. Confetti Animation
-    const duration = 3 * 1000;
+    const duration = 3000;
     const end = Date.now() + duration;
 
     (function frame() {
-        confetti({
-            particleCount: 3,
-            angle: 60,
-            spread: 55,
-            origin: { x: 0 },
-            colors: ['#00d2ff', '#3a7bd5']
-        });
-        confetti({
-            particleCount: 3,
-            angle: 120,
-            spread: 55,
-            origin: { x: 1 },
-            colors: ['#00d2ff', '#3a7bd5']
-        });
+        confetti({ particleCount: 3, angle: 60, spread: 55, origin: { x: 0 } });
+        confetti({ particleCount: 3, angle: 120, spread: 55, origin: { x: 1 } });
 
-        if (Date.now() < end) {
-            requestAnimationFrame(frame);
+        if (Date.now() < end) requestAnimationFrame(frame);
+    })();
+
+    showResultPage(true, score);
+}
+function showResultPage(isPassed, score) {
+    const area = document.getElementById('quiz-area');
+
+    const subject = localStorage.getItem('selectedSubject');
+    const level = localStorage.getItem('selectedLevel');
+
+    let badgeHTML = "";
+
+    if (isPassed && window.userBadges) {
+        const badge = window.userBadges.find(
+            b => b.subject === subject && b.level === level
+        );
+
+        if (badge && badge.badgeId) {
+            const imageUrl = "http://localhost:5000" + badge.badgeId.image;
+
+            badgeHTML = `
+                <p style="color:#00ff88;">Badge Earned 🏅</p>
+
+                <div style="margin:15px 0;">
+                    <img src="${imageUrl}" 
+                         style="width:80px; height:80px; border-radius:10px;" />
+                </div>
+
+                <a href="${imageUrl}" download 
+                   style="color:#00d2ff; text-decoration:none;">
+                   ⬇ Download Badge
+                </a>
+            `;
         }
-    }());
-
-    // 2. Prepare Popup Content
-    let title = "Level Completed!";
-    let message = `Great job! You passed ${level.replace('level', 'Level ')} with ${score}%`;
-    let icon = "🌟";
-
-    if (level === "levelC") {
-        title = "Subject Mastered! 🏆";
-        message = `Congratulations! You have successfully completed the entire ${subject} subject!`;
-        icon = "🎓";
     }
 
-    // 3. Render Result UI
-    showResultPage(true, score, title, message, icon);
-}
-
-function showResultPage(isPassed, score, title = "", message = "", icon = "") {
-    const statusColor = isPassed ? "#00ff88" : "#ff4b2b";
-    const area = document.getElementById('quiz-area');
-    
     area.innerHTML = `
-        <div class="glass-card" style="text-align:center; padding: 50px; color: white; background: rgba(255,255,255,0.05); border-radius: 15px; animation: slideUp 0.5s ease;">
-            <div style="font-size: 4rem; margin-bottom: 10px;">${isPassed ? icon : '❌'}</div>
-            <h1 style="color: ${statusColor}; margin-bottom: 10px;">${isPassed ? title : 'Exam Failed'}</h1>
-            <p style="font-size: 1.2rem; margin-bottom: 20px; opacity: 0.8;">${isPassed ? message : 'Try again to unlock the next level!'}</p>
-            <p style="font-size: 3.5rem; font-weight: bold; margin: 20px 0;">${score}%</p>
-            <button class="btn-primary" onclick="window.location.href='dashboard.html'" 
-                style="background: #00d2ff; color: black; border: none; padding: 15px 30px; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1.1rem;">
+        <div style="text-align:center; color:white;">
+            <h1>${isPassed ? "Passed 🎉" : "Failed ❌"}</h1>
+            <h2>${score}%</h2>
+
+            ${isPassed
+            ? badgeHTML
+            : `
+                    <button class="retake" onclick="goToExam('${subject}','${level}')">
+                        Retake Exam
+                    </button>
+                `
+        }
+
+            <br><br>
+
+            <button onclick="window.location.href='dashboard.html'">
                 Back to Dashboard
             </button>
-        </div>`;
+        </div>
+    `;
 }
+function goToExam(sub, lvl) {
+    localStorage.setItem('selectedSubject', sub);
+    localStorage.setItem('selectedLevel', lvl);
+
+    // reload exam properly
+    window.location.href = 'exam.html?retry=' + Date.now();
+}
+
 window.onload = initExam;
